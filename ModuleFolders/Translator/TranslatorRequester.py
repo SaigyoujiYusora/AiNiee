@@ -177,7 +177,7 @@ class TranslatorRequester(Base):
                 frequency_penalty=frequency_penalty,
                 timeout=request_timeout,
                 max_tokens=max(512,
-                               int(self.config.tokens_limit * 1.3)) if self.config.tokens_limit_switch == True else 512,
+                               int(self.config.tokens_limit * 2)) if self.config.tokens_limit_switch == True else 512,
             )
 
             # 提取回复内容
@@ -496,7 +496,7 @@ class TranslatorRequester(Base):
                     timeout=request_timeout,
                     stream=False,
                     max_tokens=max(512,
-                                   int(self.config.tokens_limit * 1.3)) if self.config.tokens_limit_switch == True else 512,
+                                   int(self.config.tokens_limit * 2)) if self.config.tokens_limit_switch == True else 512,
                 )
 
             # 提取回复内容
