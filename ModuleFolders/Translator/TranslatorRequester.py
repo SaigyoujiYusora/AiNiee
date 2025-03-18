@@ -1,16 +1,15 @@
-import cohere                           # pip install cohere
-import anthropic                        # pip install anthropic
-import google.generativeai as genai     # pip install google-generativeai
-from openai import OpenAI               # pip install openai
-
+import cohere  # pip install cohere
+import anthropic  # pip install anthropic
+import google.generativeai as genai  # pip install google-generativeai
+from openai import OpenAI  # pip install openai
 
 from Base.Base import Base
 from Base.PluginManager import PluginManager
 from ModuleFolders.Translator.TranslatorConfig import TranslatorConfig
 
+
 # 接口请求器
 class TranslatorRequester(Base):
-
 
     def __init__(self, config: TranslatorConfig, plugin_manager: PluginManager) -> None:
         super().__init__()
@@ -20,7 +19,7 @@ class TranslatorRequester(Base):
         self.plugin_manager = plugin_manager
 
     # 分发请求
-    def sent_request(self, messages: list[dict], system_prompt: str,platform_config) -> tuple[bool, str, int, int]:
+    def sent_request(self, messages: list[dict], system_prompt: str, platform_config) -> tuple[bool, str, int, int]:
         # 获取平台参数
         target_platform = platform_config.get("target_platform")
         api_format = platform_config.get("api_format")
@@ -50,7 +49,8 @@ class TranslatorRequester(Base):
                 system_prompt,
                 platform_config,
             )
-        elif target_platform == "anthropic" or (target_platform.startswith("custom_platform_") and api_format == "Anthropic"):
+        elif target_platform == "anthropic" or (
+                target_platform.startswith("custom_platform_") and api_format == "Anthropic"):
             skip, response_think, response_content, prompt_tokens, completion_tokens = self.request_anthropic(
                 messages,
                 system_prompt,
@@ -64,7 +64,6 @@ class TranslatorRequester(Base):
             )
 
         return skip, response_think, response_content, prompt_tokens, completion_tokens
-
 
     # 发起请求
     def request_sakura(self, messages, system_prompt, platform_config) -> tuple[bool, str, int, int]:
@@ -88,19 +87,20 @@ class TranslatorRequester(Base):
                     })
 
             client = OpenAI(
-                base_url = api_url,
-                api_key = api_key,
+                base_url=api_url,
+                api_key=api_key,
             )
 
             response = client.chat.completions.create(
-                model = model_name,
-                messages = messages,
-                top_p = top_p,
-                temperature = temperature,
-                frequency_penalty = frequency_penalty,
-                timeout = request_timeout,
-                max_tokens = max(512, self.config.tokens_limit) if self.config.tokens_limit_switch == True else 512,
-                extra_query = {
+                model=model_name,
+                messages=messages,
+                top_p=top_p,
+                temperature=temperature,
+                frequency_penalty=frequency_penalty,
+                timeout=request_timeout,
+                max_tokens=max(512,
+                               int(self.config.tokens_limit * 1.3)) if self.config.tokens_limit_switch == True else 512,
+                extra_query={
                     "do_sample": True,
                     "num_beams": 1,
                     "repetition_penalty": 1.0
@@ -126,7 +126,7 @@ class TranslatorRequester(Base):
             completion_tokens = 0
 
         # 将回复内容包装进可变数据容器里，使之可以被修改，并自动传回
-        response_content_dict = {"0":response_content}
+        response_content_dict = {"0": response_content}
 
         # 调用插件，进行处理
         self.plugin_manager.broadcast_event(
@@ -144,7 +144,7 @@ class TranslatorRequester(Base):
         return False, "", response_content, prompt_tokens, completion_tokens
 
     # 发起请求
-    def request_LocalLLM(self, messages, system_prompt,platform_config) -> tuple[bool, str, int, int]:
+    def request_LocalLLM(self, messages, system_prompt, platform_config) -> tuple[bool, str, int, int]:
         try:
 
             api_url = platform_config.get("api_url")
@@ -164,25 +164,24 @@ class TranslatorRequester(Base):
                         "content": system_prompt
                     })
 
-
             client = OpenAI(
-                base_url = api_url,
-                api_key = api_key,
+                base_url=api_url,
+                api_key=api_key,
             )
 
             response = client.chat.completions.create(
-                model = model_name,
-                messages = messages,
-                top_p = top_p,
-                temperature = temperature,
-                frequency_penalty = frequency_penalty,
-                timeout = request_timeout,
+                model=model_name,
+                messages=messages,
+                top_p=top_p,
+                temperature=temperature,
+                frequency_penalty=frequency_penalty,
+                timeout=request_timeout,
+                max_tokens=max(512,
+                               int(self.config.tokens_limit * 1.3)) if self.config.tokens_limit_switch == True else 512,
             )
-
 
             # 提取回复内容
             message = response.choices[0].message
-
 
             # 自适应提取推理过程
             if "</think>" in message.content:
@@ -212,11 +211,10 @@ class TranslatorRequester(Base):
         except Exception:
             completion_tokens = 0
 
-        #print("模型回复内容:\n" + response_content)
-
+        # print("模型回复内容:\n" + response_content)
 
         # 将回复内容包装进可变数据容器里，使之可以被修改，并自动传回
-        response_content_dict = {"0":response_content}
+        response_content_dict = {"0": response_content}
 
         # 调用插件，进行处理
         self.plugin_manager.broadcast_event(
@@ -229,14 +227,12 @@ class TranslatorRequester(Base):
         response_content = response_content_dict["0"]
 
         # 提取多标签情况的翻译文本,整合在一个标签里面，方便后面再次提取
-        #response_content = TranslatorRequester.extract_span_content_regex(self,response_content)
-
-
+        # response_content = TranslatorRequester.extract_span_content_regex(self,response_content)
 
         return False, response_think, response_content, prompt_tokens, completion_tokens
 
     # 发起请求
-    def request_cohere(self, messages, system_prompt,platform_config) -> tuple[bool, str, int, int]:
+    def request_cohere(self, messages, system_prompt, platform_config) -> tuple[bool, str, int, int]:
         try:
 
             api_url = platform_config.get("api_url")
@@ -248,7 +244,6 @@ class TranslatorRequester(Base):
             presence_penalty = platform_config.get("presence_penalty")
             frequency_penalty = platform_config.get("frequency_penalty")
 
-
             # 插入系统消息，与openai格式一样
             if system_prompt:
                 messages.insert(
@@ -258,23 +253,22 @@ class TranslatorRequester(Base):
                         "content": system_prompt
                     })
 
-
             # Cohere SDK 文档 - https://docs.cohere.com/reference/chat
             client = cohere.ClientV2(
-                base_url = api_url,
-                api_key = api_key,
-                timeout = request_timeout,
+                base_url=api_url,
+                api_key=api_key,
+                timeout=request_timeout,
             )
 
             response = client.chat(
-                model = model_name,
-                messages = messages,
-                temperature = temperature,
-                p = top_p,
-                presence_penalty = presence_penalty,
-                frequency_penalty = frequency_penalty,
-                max_tokens = 4096,
-                safety_mode = "NONE",
+                model=model_name,
+                messages=messages,
+                temperature=temperature,
+                p=top_p,
+                presence_penalty=presence_penalty,
+                frequency_penalty=frequency_penalty,
+                max_tokens=4096,
+                safety_mode="NONE",
             )
 
             # 提取回复的文本内容
@@ -296,7 +290,7 @@ class TranslatorRequester(Base):
             completion_tokens = 0
 
         # 将回复内容包装进可变数据容器里，使之可以被修改，并自动传回
-        response_content_dict = {"0":response_content}
+        response_content_dict = {"0": response_content}
 
         # 调用插件，进行处理
         self.plugin_manager.broadcast_event(
@@ -311,7 +305,7 @@ class TranslatorRequester(Base):
         return False, "", response_content, prompt_tokens, completion_tokens
 
     # 发起请求
-    def request_google(self, messages, system_prompt,platform_config) -> tuple[bool, str, int, int]:
+    def request_google(self, messages, system_prompt, platform_config) -> tuple[bool, str, int, int]:
         try:
 
             api_key = platform_config.get("api_key")
@@ -325,28 +319,27 @@ class TranslatorRequester(Base):
                 "parts": [m["content"]]
             } for m in messages if m["role"] != "system"]
 
-
             # Gemini SDK 文档 - https://ai.google.dev/api?hl=zh-cn&lang=python
             genai.configure(
-                api_key = api_key,
-                transport = "rest",
+                api_key=api_key,
+                transport="rest",
             )
 
             model = genai.GenerativeModel(
-                model_name = model_name,
-                safety_settings = [
+                model_name=model_name,
+                safety_settings=[
                     {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
                     {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
                     {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
                     {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
                 ],
-                system_instruction = system_prompt,
+                system_instruction=system_prompt,
             )
 
             # 提取回复的文本内容
             response = model.generate_content(
                 processed_messages,
-                generation_config = {
+                generation_config={
                     "temperature": temperature,
                     "top_p": top_p,
                     "max_output_tokens": 7096,
@@ -370,7 +363,7 @@ class TranslatorRequester(Base):
             completion_tokens = 0
 
         # 将回复内容包装进可变数据容器里，使之可以被修改，并自动传回
-        response_content_dict = {"0":response_content}
+        response_content_dict = {"0": response_content}
 
         # 调用插件，进行处理
         self.plugin_manager.broadcast_event(
@@ -385,7 +378,7 @@ class TranslatorRequester(Base):
         return False, "", response_content, prompt_tokens, completion_tokens
 
     # 发起请求
-    def request_anthropic(self, messages, system_prompt,platform_config) -> tuple[bool, str, int, int]:
+    def request_anthropic(self, messages, system_prompt, platform_config) -> tuple[bool, str, int, int]:
         try:
 
             api_url = platform_config.get("api_url")
@@ -395,20 +388,19 @@ class TranslatorRequester(Base):
             temperature = platform_config.get("temperature")
             top_p = platform_config.get("top_p")
 
-
             client = anthropic.Anthropic(
-                base_url = api_url,
-                api_key = api_key,
+                base_url=api_url,
+                api_key=api_key,
             )
 
             response = client.messages.create(
-                model = model_name,
-                system = system_prompt,
-                messages = messages,
-                temperature = temperature,
-                top_p = top_p,
-                timeout = request_timeout,
-                max_tokens = 4096,
+                model=model_name,
+                system=system_prompt,
+                messages=messages,
+                temperature=temperature,
+                top_p=top_p,
+                timeout=request_timeout,
+                max_tokens=4096,
             )
 
             # 提取回复的文本内容
@@ -430,7 +422,7 @@ class TranslatorRequester(Base):
             completion_tokens = 0
 
         # 将回复内容包装进可变数据容器里，使之可以被修改，并自动传回
-        response_content_dict = {"0":response_content}
+        response_content_dict = {"0": response_content}
 
         # 调用插件，进行处理
         self.plugin_manager.broadcast_event(
@@ -445,7 +437,7 @@ class TranslatorRequester(Base):
         return False, "", response_content, prompt_tokens, completion_tokens
 
     # 发起请求
-    def request_openai(self, messages, system_prompt,platform_config) -> tuple[bool, str, int, int]:
+    def request_openai(self, messages, system_prompt, platform_config) -> tuple[bool, str, int, int]:
         try:
             # 获取具体配置
             api_url = platform_config.get("api_url")
@@ -456,7 +448,7 @@ class TranslatorRequester(Base):
             top_p = platform_config.get("top_p")
             presence_penalty = platform_config.get("presence_penalty")
             frequency_penalty = platform_config.get("frequency_penalty")
-            extra_body = platform_config.get("extra_body","{}")
+            extra_body = platform_config.get("extra_body", "{}")
 
             # 插入系统消息
             if system_prompt:
@@ -467,10 +459,9 @@ class TranslatorRequester(Base):
                         "content": system_prompt
                     })
 
-
             client = OpenAI(
-                base_url = api_url,
-                api_key= api_key,
+                base_url=api_url,
+                api_key=api_key,
             )
 
             # 针对ds-r模型的特殊处理，因为该模型不支持模型预输入回复
@@ -479,35 +470,37 @@ class TranslatorRequester(Base):
                 if isinstance(messages[-1], dict) and messages[-1].get('role') != 'user':
                     messages = messages[:-1]  # 移除最后一个元素
 
-
             # 部分平台和模型不接受frequency_penalty参数
             if presence_penalty == 0 and frequency_penalty == 0:
                 response = client.chat.completions.create(
-                    extra_body = extra_body,
-                    model = model_name,
-                    messages = messages,
-                    temperature = temperature,
-                    top_p = top_p,
-                    timeout = request_timeout,
-                    stream = False
+                    extra_body=extra_body,
+                    model=model_name,
+                    messages=messages,
+                    temperature=temperature,
+                    top_p=top_p,
+                    timeout=request_timeout,
+                    stream=False,
+                    max_tokens=max(512,
+                                   int(self.config.tokens_limit * 1.3)) if self.config.tokens_limit_switch == True else 512,
                 )
 
             else:
                 response = client.chat.completions.create(
-                    extra_body = extra_body,
-                    model = model_name,
-                    messages = messages,
-                    temperature = temperature,
-                    top_p = top_p,
-                    presence_penalty = presence_penalty,
-                    frequency_penalty = frequency_penalty,
-                    timeout = request_timeout,
-                    stream = False
+                    extra_body=extra_body,
+                    model=model_name,
+                    messages=messages,
+                    temperature=temperature,
+                    top_p=top_p,
+                    presence_penalty=presence_penalty,
+                    frequency_penalty=frequency_penalty,
+                    timeout=request_timeout,
+                    stream=False,
+                    max_tokens=max(512,
+                                   int(self.config.tokens_limit * 1.3)) if self.config.tokens_limit_switch == True else 512,
                 )
 
             # 提取回复内容
             message = response.choices[0].message
-
 
             # 自适应提取推理过程
             if "</think>" in message.content:
@@ -538,7 +531,7 @@ class TranslatorRequester(Base):
             completion_tokens = 0
 
         # 将回复内容包装进可变数据容器里，使之可以被修改，并自动传回
-        response_content_dict = {"0":response_content}
+        response_content_dict = {"0": response_content}
 
         # 调用插件，进行处理
         self.plugin_manager.broadcast_event(
