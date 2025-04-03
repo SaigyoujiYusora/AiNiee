@@ -49,34 +49,30 @@ class TranslatorTask(Base):
 
         # 初始化辅助数据结构
         self.extra_log = []
+        # 双请求翻译的文本占位符替换
         self.replace_dict = {}
+        # 前后缀处理信息存储
+        self.prefix_codes = {}
+        self.suffix_codes = {}
         # 占位符顺序存储结构
         self.placeholder_order = {}
 
-        # 预处理正则表达式
+        # 读取正则表达式
         self.code_pattern_list = self._prepare_regex_patterns()
-        self.prefix_pattern, self.suffix_pattern = self._build_patterns()
 
-
-    def _load_regex_patterns(self, json_file_path: str) -> List[str]:
-        """从JSON文件加载正则表达式"""
-        try:
-            with open(json_file_path, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-                return [item["regex"] for item in data if isinstance(item, dict) and "regex" in item]
-        except Exception as e:
-            print(f"加载正则表达式失败: {str(e)}")
-            return []
-
+    # 读取正则库和禁翻表的正则
     def _prepare_regex_patterns(self) -> List[str]:
         """准备所有需要使用的正则表达式模式"""
+
         patterns = []
 
-        # 从文件加载基础正则
-        file_patterns = self._load_regex_patterns(self.regex_dir)
+        # 从正则库加载基础正则
+        with open(self.regex_dir, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+            file_patterns =  [item["regex"] for item in data if isinstance(item, dict) and "regex" in item]
         patterns.extend(file_patterns)
 
-        # 处理禁翻表数据
+        # 合并禁翻表数据
         exclusion_patterns = []
         for item in self.config.exclusion_list_data:
             if regex := item.get("regex"):
@@ -87,25 +83,6 @@ class TranslatorTask(Base):
         patterns.extend(exclusion_patterns)
 
         return patterns
-
-    def _build_patterns(self) -> Tuple[re.Pattern, re.Pattern]:
-        """构建前后缀正则表达式对象"""
-        if not self.code_pattern_list:
-            return re.compile(""), re.compile("")
-
-        # 为每个模式添加空白匹配能力
-        enhanced_patterns = [
-            fr"\s*{p}\s*"  # 允许前后有任意空白
-            if not any(c in p for c in ("^", "$", "\\s"))  # 避免重复空白匹配
-            else p
-            for p in self.code_pattern_list
-        ]
-
-        combined = "|".join(enhanced_patterns)
-        return (
-            re.compile(fr"^(?:{combined})+", re.IGNORECASE|re.MULTILINE),
-            re.compile(fr"(?:{combined})+$", re.IGNORECASE|re.MULTILINE)
-        )
 
 
     # 设置缓存数据
@@ -131,8 +108,8 @@ class TranslatorTask(Base):
         # 触发插件事件 - 文本正规化
         self.plugin_manager.broadcast_event("normalize_text", self.config, self.source_text_dict)
 
-        # 各种替换步骤，译前替换，提取首位代码段
-        self.source_text_dict, self.prefix_codes, self.suffix_codes,self.placeholder_order = TextProcessor.replace_all(self, self.config, self.source_text_dict, self.prefix_pattern, self.suffix_pattern,self.code_pattern_list,self.placeholder_order)
+        # 各种替换步骤，译前替换，提取首尾与占位中间代码
+        self.source_text_dict, self.prefix_codes, self.suffix_codes,self.placeholder_order = TextProcessor.replace_all(self, self.config, self.source_text_dict,self.code_pattern_list)
 
         # 生成请求指令
         if self.config.double_request_switch_settings == True:
@@ -170,7 +147,7 @@ class TranslatorTask(Base):
             self.system_prompt_b
             )
 
-    # 生成指令
+    # 生成信息结构 - 通用和思维链
     def generate_prompt(self, source_text_dict: dict, previous_text_list: list[str]) -> tuple[list[dict], str, list[str]]:
         # 储存指令
         messages = []
@@ -275,27 +252,25 @@ class TranslatorTask(Base):
         for index, line in enumerate(source_text_dict.values()):
             # 检查是否为多行文本
             if "\n" in line:
-                lines = line.split("\n")
-                # line_count = len(lines)
-                # 添加多行文本标记开始
-                # 已省略  lines=\"{line_count}\"
-                numbered_text = f"{index + 1}. \n<multiline>\n"
-                # # 为多行文本中的每一行添加子序号
-                # for sub_index, sub_line in enumerate(lines):
-                #     numbered_text += f"#{sub_index + 1}~{sub_line}~\n"
-                # 为多行文本中的每一行添加子序号（从大到1倒序排列）
+                lines = line.split("\n")  # 需要与回复提取的行分割方法一致
+                numbered_text = f"{index + 1}.[\n"
                 total_lines = len(lines)
                 for sub_index, sub_line in enumerate(lines):
-                    numbered_text += f"#{total_lines - sub_index}*{sub_line}*\n"
-                # 添加多行文本标记结束
-                numbered_text += "</multiline>"
+                    # 如果原始行尾有空格则去掉一个，经实验也在某种？程度上能够减少合并
+                    sub_line = sub_line[:-1] if sub_line and sub_line[-1].isspace() else sub_line
+                    numbered_text += f""""{index + 1}.{total_lines - sub_index}.{sub_line}",\n"""
+                numbered_text = numbered_text.rstrip('\n')
+                numbered_text = numbered_text.rstrip(',')
+                numbered_text += f"\n]"  # 用json.dumps会影响到原文的转义字符
                 numbered_lines.append(numbered_text)
             else:
                 # 单行文本直接添加序号
-                numbered_lines.append(f"{index + 1}. {line}")
+                numbered_lines.append(f"{index + 1}.{line}")
 
         source_text_str = "\n".join(numbered_lines)
         source_text_str = f"{previous}\n{pre_prompt}<textarea>\n{source_text_str}\n</textarea>"
+
+        #print(source_text_str)
 
         # 构建用户提问信息
         messages.append(
@@ -311,7 +286,7 @@ class TranslatorTask(Base):
 
         return messages, system, extra_log
 
-    # 生成指令 - 思考模型
+    # 生成信息结构 - 思考模型
     def generate_prompt_think(self, source_text_dict: dict, previous_text_list: list[str]) -> tuple[list[dict], str, list[str]]:
         # 储存指令
         messages = []
@@ -399,23 +374,19 @@ class TranslatorTask(Base):
             # 检查是否为多行文本
             if "\n" in line:
                 lines = line.split("\n")
-                # line_count = len(lines)
-                # 添加多行文本标记开始
-                # 已省略  lines=\"{line_count}\"
-                numbered_text = f"{index + 1}. \n<multiline>\n"
-                # # 为多行文本中的每一行添加子序号
-                # for sub_index, sub_line in enumerate(lines):
-                #     numbered_text += f"#{sub_index + 1}~{sub_line}~\n"
-                # 为多行文本中的每一行添加子序号（从大到1倒序排列）
+                numbered_text = f"{index + 1}.[\n"
                 total_lines = len(lines)
                 for sub_index, sub_line in enumerate(lines):
-                    numbered_text += f"#{total_lines - sub_index}*{sub_line}*\n"
-                # 添加多行文本标记结束
-                numbered_text += "</multiline>"
+                    # 如果原始行尾有空格则去掉一个，经实验也在某种？程度上能够减少合并
+                    sub_line = sub_line[:-1] if sub_line and sub_line[-1].isspace() else sub_line
+                    numbered_text += f""""{index + 1}.{total_lines - sub_index}.{sub_line}",\n"""
+                numbered_text = numbered_text.rstrip('\n')
+                numbered_text = numbered_text.rstrip(',')
+                numbered_text += f"\n]"  # 用json.dumps会影响到原文的转义字符
                 numbered_lines.append(numbered_text)
             else:
                 # 单行文本直接添加序号
-                numbered_lines.append(f"{index + 1}. {line}")
+                numbered_lines.append(f"{index + 1}.{line}")
 
         source_text_str = "\n".join(numbered_lines)
         source_text_str = f"{previous}\n{pre_prompt}<textarea>\n{source_text_str}\n</textarea>"
@@ -430,7 +401,7 @@ class TranslatorTask(Base):
 
         return messages, system, extra_log
 
-    # 生成指令 Sakura
+    # 生成信息结构 - Sakura
     def generate_prompt_sakura(self, source_text_dict: dict, previous_text_list: list[str]) -> tuple[list[dict], str, list[str]]:
         # 储存指令
         messages = []
@@ -467,7 +438,7 @@ class TranslatorTask(Base):
 
         return messages, system, extra_log
 
-    # 生成指令 LocalLLM
+    # 生成信息结构 - LocalLLM
     def generate_prompt_LocalLLM(self, source_text_dict: dict, previous_text_list: list[str]) -> tuple[list[dict], str, list[str]]:
         # 储存指令
         messages = []
@@ -492,10 +463,26 @@ class TranslatorTask(Base):
                 extra_log.append(ntl)
 
 
-        # 构建待翻译文本
+        # 构建待翻译文本 (添加序号)
         numbered_lines = []
         for index, line in enumerate(source_text_dict.values()):
-            numbered_lines.append(f"{index + 1}. {line}") # 添加序号和 "." 分隔符
+            # 检查是否为多行文本
+            if "\n" in line:
+                lines = line.split("\n")
+                numbered_text = f"{index + 1}.[\n"
+                total_lines = len(lines)
+                for sub_index, sub_line in enumerate(lines):
+                    # 如果原始行尾有空格则去掉一个，经实验也在某种？程度上能够减少合并
+                    sub_line = sub_line[:-1] if sub_line and sub_line[-1].isspace() else sub_line
+                    numbered_text += f""""{index + 1}.{total_lines - sub_index}.{sub_line}",\n"""
+                numbered_text = numbered_text.rstrip('\n')
+                numbered_text = numbered_text.rstrip(',')
+                numbered_text += f"\n]"  # 用json.dumps会影响到原文的转义字符
+                numbered_lines.append(numbered_text)
+            else:
+                # 单行文本直接添加序号
+                numbered_lines.append(f"{index + 1}.{line}")
+
         source_text_str = "\n".join(numbered_lines)
         source_text_str = f"<textarea>\n{source_text_str}\n</textarea>"
 
@@ -742,7 +729,10 @@ class TranslatorTask(Base):
             }
 
         # 提取回复内容
-        response_dict, glossary_result, NTL_result = ResponseExtractor.text_extraction(self, self.source_text_dict, response_content)
+        if  self.config.target_platform != "sakura":
+            response_dict, glossary_result, NTL_result = ResponseExtractor.text_extraction(self, self.source_text_dict, response_content,self.config.target_language)
+        else:
+            response_dict, glossary_result, NTL_result = ResponseExtractor.text_extraction_sakura(self, response_content)
 
         # 检查回复内容
         check_result, error_content = ResponseChecker.check_response_content(
@@ -754,12 +744,14 @@ class TranslatorTask(Base):
             self.source_text_dict,
         )
 
+
         # 去除回复内容的数字序号
-        response_dict = ResponseExtractor.remove_numbered_prefix(self,response_dict)
+        if  self.config.target_platform != "sakura":
+            response_dict = ResponseExtractor.remove_numbered_prefix(self, self.source_text_dict, response_dict)
 
 
         # 模型回复日志
-        if response_think != "":
+        if response_think:
             self.extra_log.append("模型思考内容：\n" + response_think)
         if self.is_debug():
             self.extra_log.append("模型回复内容：\n" + response_content)
@@ -796,7 +788,6 @@ class TranslatorTask(Base):
 
             # 更新术语表与禁翻表到配置文件中
             self.config.update_glossary_ntl_config(glossary_result, NTL_result)
-
 
             # 打印任务结果
             self.print(
@@ -897,14 +888,14 @@ class TranslatorTask(Base):
             }
 
         # 提取回复内容
-        response_dict, glossary_result, NTL_result = ResponseExtractor.text_extraction(self, self.source_text_dict, response_content)
+        response_dict, glossary_result, NTL_result = ResponseExtractor.text_extraction(self, self.source_text_dict, response_content,self.config.target_language)
 
         # 更新术语表与禁翻表到配置文件中
         self.config.update_glossary_ntl_config(glossary_result, NTL_result)
 
 
         # 模型回复日志
-        if response_think != "":
+        if response_think:
             self.extra_log.append("第一次模型思考内容：\n" + response_think)
         if self.is_debug():
             self.extra_log.append("第一次模型回复内容：\n" + response_content)
@@ -951,7 +942,7 @@ class TranslatorTask(Base):
             }
 
         # 提取回复内容
-        response_dict, glossary_result, NTL_result = ResponseExtractor.text_extraction(self,  self.source_text_dict, response_content)
+        response_dict, glossary_result, NTL_result = ResponseExtractor.text_extraction(self,  self.source_text_dict, response_content,self.config.target_language)
 
         # 检查回复内容
         check_result, error_content = ResponseChecker.check_response_content(
@@ -964,7 +955,7 @@ class TranslatorTask(Base):
         )
 
         # 去除回复内容的数字序号
-        response_dict = ResponseExtractor.remove_numbered_prefix(self,response_dict)
+        response_dict = ResponseExtractor.remove_numbered_prefix(self, self.source_text_dict, response_dict)
 
 
         # 模型回复日志

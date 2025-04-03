@@ -153,16 +153,49 @@ class PromptBuilder(Base):
         # 将原文本字典转换成行文本，并加上数字序号
         if source_dict:
 
-            source_numbered_lines = []
-            for index_s, line in enumerate(source_dict.values()):
-                source_numbered_lines.append(f"{index_s + 1}. {line}") # 添加序号和 "." 分隔符
+            # 构建原文示例
+            numbered_lines = []
+            for index, line in enumerate(source_dict.values()):
+                # 检查是否为多行文本
+                if "\n" in line:
+                    lines = line.split("\n")
+                    numbered_text = f"{index + 1}.[\n"
+                    total_lines = len(lines)
+                    for sub_index, sub_line in enumerate(lines):
+                        numbered_text += f""""{index + 1}.{total_lines - sub_index}.{sub_line}",\n"""
+                    numbered_text = numbered_text.rstrip('\n')
+                    numbered_text = numbered_text.rstrip(',')
+                    numbered_text += f"\n]"  # 用json.dumps会影响到原文的转义字符
+                    numbered_lines.append(numbered_text)
+                else:
+                    # 单行文本直接添加序号
+                    numbered_lines.append(f"{index + 1}.{line}")
 
+            source_str = "\n".join(numbered_lines)
+
+
+            # 构建译文示例
             target_numbered_lines = []
-            for index_t, line in enumerate(target_dict.values()):
-                target_numbered_lines.append(f"{index_t + 1}. {line}") # 添加序号和 "." 分隔符
+            for index, line in enumerate(target_dict.values()):
+                # 检查是否为多行文本
+                if "\n" in line:
+                    lines = line.split("\n")
+                    numbered_text = f"{index + 1}.[\n"
+                    total_lines = len(lines)
+                    for sub_index, sub_line in enumerate(lines):
+                        numbered_text += f""""{index + 1}.{total_lines - sub_index}.{sub_line}",\n"""
+                    numbered_text = numbered_text.rstrip('\n')
+                    numbered_text = numbered_text.rstrip(',')
+                    numbered_text += f"\n]"  # 用json.dumps会影响到原文的转义字符
+                    target_numbered_lines.append(numbered_text)
+                else:
+                    # 单行文本直接添加序号
+                    target_numbered_lines.append(f"{index + 1}.{line}")
 
-            source_str = "\n".join( source_numbered_lines)
-            target_str = "\n".join( target_numbered_lines)
+
+            target_str = "\n".join(target_numbered_lines)
+
+
 
         return source_str, target_str
 
@@ -394,11 +427,12 @@ class PromptBuilder(Base):
                 translated_list.append(trans)
                 counter += 1
 
-        # 优化过滤逻辑（保持原有逻辑，添加注释说明）
+        # 优化过滤逻辑
         def filter_func(items, text):
             return [item for item in items 
-                    if not item.startswith(text)  # 排除纯示例开头的项
-                    or not any(c.isdigit() for c in item[-3:])]  # 排除末尾3字符含数字的项
+                    if (not item.startswith(text)  # 排除纯示例开头的项
+                        or not any(c.isdigit() for c in item[-3:]))  # 排除末尾3字符含数字的项
+                    and len(item) <= 80]  #过滤不超过设定长度的项
 
         # 清理和重新编号
         source_cleaned = PromptBuilder.clean_list(filter_func(source_list, source_text))
@@ -461,15 +495,15 @@ class PromptBuilder(Base):
     def build_glossary_extraction_criteria(config: TranslatorConfig) -> str:
 
         if config.target_language in ("chinese_simplified", "chinese_traditional"):
-            profile = "\n\n###提取文本中角色名，以glossary标签返回\n"
-            profile += "<glossary>\n"
-            profile += "原文|译文|备注\n"
-            profile += "</glossary>\n"
+            profile = "\n\n###如果文本中出现具体角色名，则以character并列标签返回，没有则不返回\n"
+            profile += "<character>\n"
+            profile += "原名|译名|备注\n"
+            profile += "</character>\n"
         else:
-            profile = "\n\n### Extract character names from the text and return them using glossary tags\n"
-            profile += "<glossary>\n"
-            profile += "Original Text|Translation|Remarks\n"
-            profile += "</glossary>\n"
+            profile = "\n\n### If specific character names appear in the text, return them with the character label, otherwise do not return\n"
+            profile += "<character>\n"
+            profile += "Original Name|Translated Name|Remarks\n"
+            profile += "</character>\n"
 
         return profile
 
@@ -516,9 +550,9 @@ class PromptBuilder(Base):
 
         # 构建结果字符串
         if config.target_language in ("chinese_simplified", "chinese_traditional"):
-            result = "\n###禁翻表"+ "\n特殊标记符|备注"
+            result = "\n###禁翻表，以下特殊标记符无需翻译改动"+ "\n特殊标记符|备注"
         else:
-            result = "\n###Non-Translation List"+ "\nSpecial marker|Remarks"
+            result = "\n###Non-Translation List,Leave the following marked content untranslated and unmodified"+ "\nSpecial marker|Remarks"
 
         for markers, info in exclusion_dict.items():
             result += f"\n{markers}|{info}" if info else f"\n{markers}|"
@@ -529,12 +563,12 @@ class PromptBuilder(Base):
     def build_ntl_extraction_criteria(config: TranslatorConfig) -> str:
 
         if config.target_language in ("chinese_simplified", "chinese_traditional"):
-            profile = "\n\n###提取文本中标记符，如 {name}, //F[N1],以code标签返回\n"
+            profile = "\n\n###如果文本中出现标记符, 如 {name}, //F[N1],则以code并列标签返回，没有则不返回\n"
             profile += "<code>\n"
             profile += "标记符|备注\n"
             profile += "</code>\n"
         else:
-            profile = "\n\n### Extract markers from the text, such as {name}, //F[N1], and return them within `code` tags\n"
+            profile = "\n\n### If markers appear in the text, such as {name}, //F[N1], return them with the code label, otherwise do not return\n"
             profile += "<code>\n"
             profile += "Marker|Remarks\n"
             profile += "</code>\n"

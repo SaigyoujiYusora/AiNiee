@@ -1,12 +1,11 @@
-import cohere  # pip install cohere
-import anthropic  # pip install anthropic
-import google.generativeai as genai  # pip install google-generativeai
-from openai import OpenAI  # pip install openai
+import cohere                           # pip install cohere
+import anthropic                        # pip install anthropic
+import google.generativeai as genai     # pip install google-generativeai
+from openai import OpenAI               # pip install openai
 
 from Base.Base import Base
 from Base.PluginManager import PluginManager
 from ModuleFolders.Translator.TranslatorConfig import TranslatorConfig
-
 
 # 接口请求器
 class TranslatorRequester(Base):
@@ -19,7 +18,7 @@ class TranslatorRequester(Base):
         self.plugin_manager = plugin_manager
 
     # 分发请求
-    def sent_request(self, messages: list[dict], system_prompt: str, platform_config) -> tuple[bool, str, int, int]:
+    def sent_request(self, messages: list[dict], system_prompt: str,platform_config) -> tuple[bool, str, int, int]:
         # 获取平台参数
         target_platform = platform_config.get("target_platform")
         api_format = platform_config.get("api_format")
@@ -49,8 +48,7 @@ class TranslatorRequester(Base):
                 system_prompt,
                 platform_config,
             )
-        elif target_platform == "anthropic" or (
-                target_platform.startswith("custom_platform_") and api_format == "Anthropic"):
+        elif target_platform == "anthropic" or (target_platform.startswith("custom_platform_") and api_format == "Anthropic"):
             skip, response_think, response_content, prompt_tokens, completion_tokens = self.request_anthropic(
                 messages,
                 system_prompt,
@@ -64,6 +62,7 @@ class TranslatorRequester(Base):
             )
 
         return skip, response_think, response_content, prompt_tokens, completion_tokens
+
 
     # 发起请求
     def request_sakura(self, messages, system_prompt, platform_config) -> tuple[bool, str, int, int]:
@@ -87,8 +86,8 @@ class TranslatorRequester(Base):
                     })
 
             client = OpenAI(
-                base_url=api_url,
-                api_key=api_key,
+                base_url = api_url,
+                api_key = api_key,
             )
 
             response = client.chat.completions.create(
@@ -126,7 +125,7 @@ class TranslatorRequester(Base):
             completion_tokens = 0
 
         # 将回复内容包装进可变数据容器里，使之可以被修改，并自动传回
-        response_content_dict = {"0": response_content}
+        response_content_dict = {"0":response_content}
 
         # 调用插件，进行处理
         self.plugin_manager.broadcast_event(
@@ -144,7 +143,7 @@ class TranslatorRequester(Base):
         return False, "", response_content, prompt_tokens, completion_tokens
 
     # 发起请求
-    def request_LocalLLM(self, messages, system_prompt, platform_config) -> tuple[bool, str, int, int]:
+    def request_LocalLLM(self, messages, system_prompt,platform_config) -> tuple[bool, str, int, int]:
         try:
 
             api_url = platform_config.get("api_url")
@@ -165,8 +164,8 @@ class TranslatorRequester(Base):
                     })
 
             client = OpenAI(
-                base_url=api_url,
-                api_key=api_key,
+                base_url = api_url,
+                api_key = api_key,
             )
 
             response = client.chat.completions.create(
@@ -191,6 +190,8 @@ class TranslatorRequester(Base):
             else:
                 try:
                     response_think = message.reasoning_content
+                    if not response_think:
+                        response_think = ""
                 except Exception:
                     response_think = ""
                 response_content = message.content
@@ -211,10 +212,10 @@ class TranslatorRequester(Base):
         except Exception:
             completion_tokens = 0
 
-        # print("模型回复内容:\n" + response_content)
+        #print("模型回复内容:\n" + response_content)
 
         # 将回复内容包装进可变数据容器里，使之可以被修改，并自动传回
-        response_content_dict = {"0": response_content}
+        response_content_dict = {"0":response_content}
 
         # 调用插件，进行处理
         self.plugin_manager.broadcast_event(
@@ -227,12 +228,12 @@ class TranslatorRequester(Base):
         response_content = response_content_dict["0"]
 
         # 提取多标签情况的翻译文本,整合在一个标签里面，方便后面再次提取
-        # response_content = TranslatorRequester.extract_span_content_regex(self,response_content)
+        #response_content = TranslatorRequester.extract_span_content_regex(self,response_content)
 
         return False, response_think, response_content, prompt_tokens, completion_tokens
 
     # 发起请求
-    def request_cohere(self, messages, system_prompt, platform_config) -> tuple[bool, str, int, int]:
+    def request_cohere(self, messages, system_prompt,platform_config) -> tuple[bool, str, int, int]:
         try:
 
             api_url = platform_config.get("api_url")
@@ -510,6 +511,8 @@ class TranslatorRequester(Base):
             else:
                 try:
                     response_think = message.reasoning_content
+                    if not response_think:
+                        response_think = ""
                 except Exception:
                     response_think = ""
                 response_content = message.content
