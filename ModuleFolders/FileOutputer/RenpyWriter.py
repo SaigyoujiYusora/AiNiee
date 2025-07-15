@@ -1,72 +1,92 @@
-import os
-import shutil
+import re
+from pathlib import Path
 
-# 改进点:现在还没能正确处理文本中含有双引号的问题
-class RenpyWriter():
-    def __init__(self):
-        pass
+from ModuleFolders.Cache.CacheFile import CacheFile
+from ModuleFolders.Cache.CacheProject import ProjectType
+from ModuleFolders.FileOutputer.BaseWriter import (
+    BaseTranslatedWriter,
+    OutputConfig,
+    PreWriteMetadata
+)
 
-    def output_renpy_file(self, data, output_path, input_path):
-        """写入翻译后的rpy文件，兼容两种格式"""
 
-        # 创建输出目录并复制原始文件
-        os.makedirs(output_path, exist_ok=True)
-        RenpyWriter._copy_renpy_files(self,input_path, output_path)
+class RenpyWriter(BaseTranslatedWriter):
+    def __init__(self, output_config: OutputConfig):
+        super().__init__(output_config)
 
-        # 按文件分组数据
-        file_map = {}
-        for item in data:
-            if "new_line_num" not in item:
+    @classmethod
+    def get_project_type(self):
+        return ProjectType.RENPY
+
+    def on_write_translated(
+        self, translation_file_path: Path, cache_file: CacheFile,
+        pre_write_metadata: PreWriteMetadata,
+        source_file_path: Path = None,
+    ):
+        # 读取行，保留换行符
+        lines = source_file_path.read_text(encoding="utf-8").splitlines(True)
+
+        # 按行号降序排序项目，以避免修改期间索引偏移问题
+        new_items = sorted(cache_file.items, key=lambda x: x.require_extra("new_line_num"), reverse=True)
+
+        for item in new_items:
+            line_num = item.require_extra("new_line_num")  # 这是要修改的行号（'new' 行或代码行）
+            if line_num < 0 or line_num >= len(lines):
+                print(f"警告: 项目的行号 {line_num} 无效。正在跳过。")
                 continue
 
-            full_path = os.path.join(output_path, item["storage_path"])
-            file_map.setdefault(full_path, []).append(item)
+            original_line = lines[line_num]
+            new_trans = item.final_text # 最终文本
 
-        # 处理每个文件
-        for file_path, items in file_map.items():
-            with open(file_path, "r", encoding="utf-8") as f:
-                lines = f.readlines()
+            # 只转义单个双引号
+            new_trans = self._escape_quotes_for_renpy(item.final_text)
 
-            # 按行号降序排序避免修改影响
-            sorted_items = sorted(items, key=lambda x: x["new_line_num"], reverse=True)
+            # 查找原始行中第一个和最后一个双引号的索引
+            first_quote_index = original_line.find('"')
+            last_quote_index = original_line.rfind('"')
 
-            for item in sorted_items:
-                line_num = item["new_line_num"]
-                if line_num >= len(lines):
-                    continue
+            # 确保我们找到了不同的开始和结束引号
+            if first_quote_index != -1 and last_quote_index != -1 and first_quote_index < last_quote_index:
+                # 提取第一个引号之前的部分（包括缩进、标签等）
+                prefix = original_line[:first_quote_index + 1]
+                # 提取最后一个引号之后的部分（包括尾随空格、注释等）
+                suffix = original_line[last_quote_index:]
 
-                new_trans = item["translated_text"]
-                format_type = item["format_type"]
+                # 通过仅替换引号内的内容来构造新行
+                new_line = f'{prefix}{new_trans}{suffix}'
+                lines[line_num] = new_line
 
-                if format_type == "old_new":
-                    old_line = lines[line_num]
-                    # 保留原格式生成新行
-                    parts = old_line.split('"', 2)
-                    if len(parts) >= 3:
-                        new_line = f'{parts[0]}"{new_trans}"{parts[2]}'
-                        lines[line_num] = new_line
-                elif format_type == "comment_tag":
-                    old_line = lines[line_num]
-                    tag = item["tag"]
-                    # 保留tag生成新行
-                    parts = old_line.split('"', 1)
-                    if len(parts) >= 2:
-                        new_line = f'    {tag} "{new_trans}{parts[1][len(parts[1].split("\"",1)[0]):]}' # fix for tag with space
-                        lines[line_num] = new_line
+        # 将修改后的行写回到翻译文件路径
+        translation_file_path.parent.mkdir(parents=True, exist_ok=True) # 确保目录存在
+        translation_file_path.write_text("".join(lines), encoding="utf-8")
 
 
-            # 写回文件
-            with open(file_path, "w", encoding="utf-8") as f:
-                f.writelines(lines)
 
+    def _escape_quotes_for_renpy(self, text: str) -> str:
+        """
+        - 保留已经转义的 `\"`。
+        - 保留空的双引号 `""`。
+        - 保留带空格的双引号 `" "`。
+        - 将所有其他 `"` 转义为 `\"`。
+        """
+        # 正则表达式匹配以下任意一种情况：
+        # 1. `\\\"`: 一个已经转义的双引号
+        # 2. `\"\"`: 两个连续的双引号
+        # 3. `\" \"`: 一个带空格的双引号
+        # 4. `\"`: 单个双引号
+        # re.sub 会从左到右匹配，所以 `\\"` 会优先于 `"` 被匹配。
+        pattern = r'\\\"|\"\"|\" \"|\"'
 
-    # 复制renpy文件
-    def _copy_renpy_files(self, input_path, output_path):
-        for dirpath, _, filenames in os.walk(input_path):
-            for filename in filenames:
-                if filename.endswith('.rpy'):
-                    src = os.path.join(dirpath, filename)
-                    rel_path = os.path.relpath(src, input_path)
-                    dst = os.path.join(output_path, rel_path)
-                    os.makedirs(os.path.dirname(dst), exist_ok=True)
-                    shutil.copy2(src, dst)
+        def replacer(match):
+            """定义替换逻辑"""
+            matched_text = match.group(0)
+            # 如果匹配到的是特殊情况，则原样返回，不进行任何修改
+            if matched_text in ('\\"', '""', '" "'):
+                return matched_text
+            # 否则，匹配到的是需要转义的单个双引号
+            elif matched_text == '"':
+                return '\\"'
+            # 理论上不会走到这里，但作为保障
+            return matched_text
+
+        return re.sub(pattern, replacer, text)

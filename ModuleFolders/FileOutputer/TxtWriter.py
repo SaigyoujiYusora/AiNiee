@@ -1,82 +1,72 @@
-import os
+from pathlib import Path
+from typing import Callable
 
-class TxtWriter():
-    def __init__(self):
-        pass
+from ModuleFolders.Cache.CacheFile import CacheFile
+from ModuleFolders.Cache.CacheItem import CacheItem
+from ModuleFolders.Cache.CacheProject import ProjectType
+from ModuleFolders.FileOutputer.BaseWriter import (
+    BaseBilingualWriter,
+    BaseTranslatedWriter,
+    OutputConfig,
+    PreWriteMetadata,
+    BilingualOrder,
+)
 
-    def output_txt_file(self, cache_data, output_path):
-        text_dict = {}
 
-        # 遍历缓存数据
-        for item in cache_data:
-            # 忽略不包含 'storage_path' 的项
-            if 'storage_path' not in item:
-                continue
+class TxtWriter(BaseBilingualWriter, BaseTranslatedWriter):
+    def __init__(self, output_config: OutputConfig):
+        super().__init__(output_config)
 
-            # 获取相对文件路径
-            storage_path = item['storage_path']
-            file_name = item['file_name']
+    def on_write_bilingual(
+        self, translation_file_path: Path, cache_file: CacheFile,
+        pre_write_metadata: PreWriteMetadata,
+        source_file_path: Path = None,
+    ):
+        self._write_translation_file(translation_file_path, cache_file, pre_write_metadata, self._item_to_bilingual_line)
 
-            # 构建文件路径
-            if file_name != storage_path:
-                file_path = os.path.join(output_path, storage_path)
-                folder_path = os.path.dirname(file_path)
-                os.makedirs(folder_path, exist_ok=True)
-            else:
-                file_path = os.path.join(output_path, storage_path)
+    def on_write_translated(
+        self, translation_file_path: Path, cache_file: CacheFile,
+        pre_write_metadata: PreWriteMetadata,
+        source_file_path: Path = None,
+    ):
+        self._write_translation_file(translation_file_path, cache_file, pre_write_metadata, self._item_to_translated_line)
 
-            # 构建存储结构
-            text = {
-                'translation_status': item['translation_status'],
-                'source_text': item['source_text'],
-                'translated_text': item['translated_text'],
-                'sentence_indent': item['sentence_indent'],  # 修正键名
-                'line_break': item['line_break']
-            }
-            text_dict.setdefault(file_path, []).append(text)
+    def _write_translation_file(
+        self, translation_file_path: Path, cache_file: CacheFile,
+        pre_write_metadata: PreWriteMetadata,
+        item_to_line: Callable[[CacheItem], str],
+    ):
+        if not cache_file.items:
+            translation_file_path.touch()
+            return
 
-        # 遍历所有文件路径
-        for file_path, content_list in text_dict.items():
-            # ================= 生成译文版 =================
-            # 构建译文版路径
-            folder_path, old_filename = os.path.split(file_path)
-            translated_filename = f"{os.path.splitext(old_filename)[0]}_translated.txt"
-            translated_path = os.path.join(folder_path, translated_filename)
+        # 处理所有项目
+        lines = list(map(item_to_line, cache_file.items))
 
-            # ================= 生成双语版 =================
-            # 构建双语版路径
-            bilingual_base = os.path.join(output_path, "bilingual_txt")
-            relative_path = os.path.relpath(file_path, output_path)
-            bilingual_fullpath = os.path.join(bilingual_base, relative_path)
-            bilingual_folder, bilingual_filename = os.path.split(bilingual_fullpath)
-            bilingual_filename = f"{os.path.splitext(bilingual_filename)[0]}_bilingual.txt"
-            bilingual_path = os.path.join(bilingual_folder, bilingual_filename)
-            os.makedirs(bilingual_folder, exist_ok=True)
+        translation_file_path.write_text("".join(lines), encoding=pre_write_metadata.encoding)
 
-            # 生成内容
-            translated_content = []
-            bilingual_content = []
-            
-            for content in content_list:
-                indent = "　" * content['sentence_indent']
-                line_break = "\n" * (content['line_break'] + 1)
-                
-                # 处理译文内容
-                clean_translated = content['translated_text'].lstrip()
-                translated_line = f"{indent}{clean_translated}"
-                translated_content.append(f"{translated_line}{line_break}")
-                
-                # 处理双语内容
-                clean_source = content['source_text'].lstrip()
-                source_line = f"{indent}{clean_source}"
-                translated_line = f"{indent}{clean_translated}"
-                bilingual_block = f"{source_line}\n{translated_line}\n{line_break}"
-                bilingual_content.append(bilingual_block)
+    # 双语版构建
+    def _item_to_bilingual_line(self, item: CacheItem):
+        line_break = "\n" * max(item.require_extra("line_break") + 1, 1)
+        
+        # 检查配置并决定输出顺序
+        if self.output_config.bilingual_order == BilingualOrder.TRANSLATION_FIRST:
+            return (
+                f"{item.final_text}\n"
+                f"{item.source_text}{line_break}"
+            )
+        else: # 默认为原文在前
+            return (
+                f"{item.source_text}\n"
+                f"{item.final_text}{line_break}"
+            )
+        
+    # 译文版构建
+    def _item_to_translated_line(self, item: CacheItem):
+        line_break = "\n" * (item.require_extra("line_break") + 1)
 
-            # 写入译文版
-            with open(translated_path, "w", encoding="utf-8") as f:
-                f.write("".join(translated_content))
-                
-            # 写入双语版
-            with open(bilingual_path, "w", encoding="utf-8") as f:
-                f.write("".join(bilingual_content))
+        return f"{item.final_text}{line_break}"
+
+    @classmethod
+    def get_project_type(self):
+        return ProjectType.TXT
